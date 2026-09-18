@@ -12,7 +12,8 @@ Nothing here is interactive: it runs, logs, verifies, and exits with a status co
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `--folder URL\|ID` | bundled sample folder | Google Drive folder URL, or a bare folder id |
+| `--folder URL\|ID` | *prompts you* | Google Drive folder URL, or a bare folder id |
+| `--no-input` | off | Never prompt; fall back to the bundled sample folder |
 | `--out DIR` | `./downloads` | Output directory (created if missing) |
 | `--workers N` | `2` | Concurrent downloads. 2–4 is sensible; higher risks throttling |
 | `--retries N` | `2` | Repair passes for files that came out short or missing |
@@ -25,6 +26,39 @@ Nothing here is interactive: it runs, logs, verifies, and exits with a status co
 | `--setup` | off | Install Python deps + Playwright Chromium, then exit |
 | `--quiet` | off | Print only problems — ideal for cron and CI |
 
+## Picking the folder
+
+Run it with no arguments and it asks:
+
+```console
+  drive-pdf-downloader
+  Enter the Google Drive folder URL (or folder id).
+  Anything shared as 'Anyone with the link' works - no sign-in needed.
+
+  Bundled sample folder:
+    https://drive.google.com/drive/u/0/folders/1OhkZja...
+
+  folder URL or id (Enter = sample folder):
+```
+
+* Paste any folder URL (`.../drive/folders/<id>`, with or without `?usp=...`), or just the
+  bare `<id>`. Surrounding quotes are stripped, so pasting from a terminal is fine.
+* Press **Enter** on an empty line to use the bundled sample folder.
+* Three invalid answers in a row fall back to the sample folder — it never loops forever.
+* A `file/d/<id>/view` link is rejected with a clear message: this tool needs a *folder*.
+* `Ctrl-C` or EOF (closed stdin) is treated as "use the sample folder", so a piped or
+  scheduled run can never hang waiting for input.
+
+**Unattended runs never prompt.** Prompting only happens when stdin is a real terminal. In
+cron, systemd, Docker or GitHub Actions the bundled sample folder is used instead — pass
+`--folder` to point at your own, or `--no-input` to force non-interactive behaviour
+explicitly.
+
+```bash
+python drive_pdf_downloader.py --folder "https://drive.google.com/drive/folders/<ID>"
+python drive_pdf_downloader.py --list --no-input          # non-interactive listing
+```
+
 ## Output
 
 ```
@@ -34,9 +68,13 @@ downloads/
 └── …
 ```
 
-* File names are the folder's names with the `.pdf` extension removed and then the PDF
-  rebuilt by this tool. Illegal path characters are replaced with `_`, and names are
-  truncated at 120 characters so they stay valid on Windows.
+* File names are the folder names **verbatim**, extension included — an output file is
+  byte-for-byte the same name Drive showed you. The name is also stored in the PDF's `Title`
+  metadata. The only exception is a name this filesystem cannot accept at all (illegal
+  characters, >200 characters, a trailing space/period, or a Windows reserved device name
+  such as `CON`); then it is minimally sanitised and the change is logged:
+  `note  'a/b:c.pdf' -> 'a_b_c.pdf' (contains characters this filesystem forbids)`.
+  Verification repeats the Drive name whenever it differs from the file on disk.
 * Verification reports real page counts read back from the saved files.
 * A crash leaves `*.pdf.part` files, never a truncated `.pdf`.
 

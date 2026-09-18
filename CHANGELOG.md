@@ -11,6 +11,17 @@ The first public release, after a long debugging session against a real 19-docum
 
 ### Added
 
+- **Interactive folder prompt** — run it with no arguments and it asks for the Google Drive
+  folder URL or id (`--folder` skips it, `--no-input` forces non-interactive). Prompting only
+  happens on a real terminal, so cron, systemd, Docker and GitHub Actions runs never block;
+  `Ctrl-C` or EOF falls back to the bundled sample folder instead of hanging. Bad input is
+  explained and re-prompted, up to three times.
+- **Filenames preserved verbatim** — output files keep the Drive name exactly, extension
+  included, instead of being rebuilt through a sanitiser. The original name is also written
+  into the PDF's `Title` metadata. A file is renamed only when the local filesystem would
+  genuinely reject the name (illegal characters, >200 chars, trailing space/period, Windows
+  reserved device names) and the reason is logged; verification repeats the Drive name
+  whenever it differs from the file on disk.
 - **Page-count verification** — every saved PDF is reopened with `pypdfium2` and its page
   count compared against the viewer's `Page X of Y` indicator; `SHORT`/`MISSING`/`UNREAD`
   files are reported and retried.
@@ -23,8 +34,8 @@ The first public release, after a long debugging session against a real 19-docum
 - **Concurrent** async worker pool (`--workers`, default 2).
 - **Atomic writes** — pages are written to `*.pdf.part` and renamed, so an interrupted run
   never leaves a truncated PDF.
-- **CLI**: `--folder`, `--out`, `--workers`, `--retries`, `--timeout`, `--engine`, `--headed`,
-  `--only`, `--one`, `--list`, `--setup`, `--quiet`.
+- **CLI**: `--folder`, `--no-input`, `--out`, `--workers`, `--retries`, `--timeout`, `--engine`,
+  `--headed`, `--only`, `--one`, `--list`, `--setup`, `--quiet`.
 - **Meaningful exit codes** — `0` complete, `1` nothing found, `2` incomplete, `130`
   interrupted.
 - Setup and run scripts for Windows (PowerShell + `.bat`), macOS and Linux.

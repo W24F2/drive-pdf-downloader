@@ -51,6 +51,9 @@ This project fixes all four:
 ## ✨ Features
 
 - **Complete documents** — page count taken from the viewer indicator, not guessed.
+- **Original filenames preserved** — output files keep the Drive name *verbatim*, and the name
+  is also written into the PDF's `Title` metadata. A file is only renamed when the local
+  filesystem would genuinely reject the name, and the reason is always logged.
 - **No black spots** — white-composited page rasters.
 - **Verified** — automatic post-download page-count verification with a repair pass.
 - **Two capture engines** — in-page canvas (default) with an automatic screenshot fallback.
@@ -110,6 +113,22 @@ python drive_pdf_downloader.py
 
 Output lands in **`./downloads/`** as `<original name>.pdf`.
 
+On the first run it asks which folder you want — paste any *"Anyone with the link"* Drive
+folder URL and press Enter, or just press Enter to use the bundled sample folder:
+
+```console
+  drive-pdf-downloader
+  Enter the Google Drive folder URL (or folder id).
+  Anything shared as 'Anyone with the link' works - no sign-in needed.
+
+  Bundled sample folder:
+    https://drive.google.com/drive/u/0/folders/1OhkZja...
+
+  folder URL or id (Enter = sample folder): https://drive.google.com/drive/folders/1AbC...
+```
+
+Skip the prompt in scripts and scheduled jobs with `--folder <url>` or `--no-input`.
+
 ---
 
 ## 🧰 Usage
@@ -120,7 +139,8 @@ python drive_pdf_downloader.py [options]
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `--folder URL\|ID` | bundled sample folder | Google Drive folder URL **or** bare folder id |
+| `--folder URL\|ID` | *prompts you* | Google Drive folder URL **or** bare folder id |
+| `--no-input` | off | Never prompt; use the bundled sample folder if `--folder` is omitted |
 | `--out DIR` | `./downloads` | Where PDFs are written |
 | `--workers N` | `2` | Concurrent downloads |
 | `--retries N` | `2` | Repair passes for files that came out short |

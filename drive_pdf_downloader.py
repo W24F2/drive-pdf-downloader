@@ -148,23 +148,121 @@ def find_chrome() -> str | None:
 
 
 def clean_name(name: str, limit: int = 120) -> str:
-    """Filesystem-safe file stem (valid on Windows, macOS and Linux)."""
+    """Last-resort sanitiser: a filesystem-safe file stem."""
     stem = re.sub(r"(?i)\.pdf$", "", name.strip())
     stem = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", stem)
     stem = re.sub(r"\s+", " ", stem).strip(" .")
     return (stem[:limit].strip() or "document")
 
 
+# Windows refuses these as file names, with or without an extension.
+RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+# Leave headroom for the output directory: Windows caps whole paths at 260
+# characters by default, and `downloads/` plus a long Drive name gets close.
+MAX_NAME_LEN = 200
+
+
+def name_problem(name: str) -> str | None:
+    """Reason this name cannot be used verbatim on this OS (None = it can)."""
+    if re.search(r'[<>:"/\\|?*\x00-\x1f]', name):
+        return "contains characters this filesystem forbids"
+    if len(name) > MAX_NAME_LEN:
+        return f"is {len(name)} characters long (limit {MAX_NAME_LEN})"
+    if name != name.rstrip() or name.endswith("."):
+        return "ends with a space or a period"
+    if sys.platform.startswith("win") and name.split(".")[0].upper() in RESERVED_NAMES:
+        return "is a reserved device name on Windows"
+    return None
+
+
+def escape_reserved(stem: str) -> str:
+    """Prefix a Windows reserved device name so the file can be created."""
+    if stem.split(".")[0].upper() in RESERVED_NAMES:
+        return "_" + stem
+    return stem
+
+
+def output_name(original: str) -> tuple[str, str | None]:
+    """Output file name for a Drive entry, plus why it had to be changed.
+
+    The original name is preserved **verbatim** - exactly what Drive shows, with
+    its extension intact. Sanitising happens only when the local filesystem would
+    genuinely reject the name, and the reason is returned so the caller can say
+    so out loud. Nothing is ever renamed silently.
+    """
+    name = original.strip()
+    if not re.search(r"(?i)\.pdf$", name):
+        name += ".pdf"
+    problem = name_problem(name)
+    if problem is None:
+        return name, None
+    return escape_reserved(clean_name(name)) + ".pdf", problem
+
+
 def resolve_folder_id(folder: str) -> str:
+    """Accept a Drive folder URL, or a bare folder id. Raises ValueError."""
+    folder = folder.strip()
+    if not folder:
+        raise ValueError("no folder was given")
     if "://" not in folder:
-        return folder.strip()
+        if not re.fullmatch(r"[-\w]{10,}", folder):
+            raise ValueError(f"{folder!r} is not a Google Drive folder id")
+        return folder
+    if "/file/d/" in folder:
+        raise ValueError(
+            "that is a link to a single file - this tool needs a folder link"
+        )
     match = re.search(r"/folders/([-\w]+)", folder)
     if match:
         return match.group(1)
     match = FOLDER_ID_RE.search(folder)
     if not match:
-        raise SystemExit(f"Could not find a folder id in {folder!r}")
+        raise ValueError(f"could not find a folder id in {folder!r}")
     return match.group(0)
+
+
+def choose_folder(args, log: Log) -> str:
+    """Folder to use: --folder, or an interactive prompt, or the bundled sample.
+
+    Prompting is skipped when stdin is not a terminal (cron, CI, pipes) so
+    unattended runs never block waiting for input.
+    """
+    if args.folder:
+        return args.folder
+    interactive = not getattr(args, "no_input", False) and sys.stdin is not None and sys.stdin.isatty()
+    if not interactive:
+        log("no --folder given and stdin is not a terminal - using the bundled sample folder")
+        return DEFAULT_FOLDER
+    return prompt_for_folder()
+
+
+def prompt_for_folder(default: str = DEFAULT_FOLDER, attempts: int = 3) -> str:
+    """Ask the user for a Drive folder URL or id."""
+    print("\n  drive-pdf-downloader")
+    print("  Enter the Google Drive folder URL (or folder id).")
+    print("  Anything shared as 'Anyone with the link' works - no sign-in needed.")
+    print(f"\n  Bundled sample folder:\n    {default}")
+    for _ in range(attempts):
+        try:
+            answer = input("\n  folder URL or id (Enter = sample folder): ").strip().strip("\"'")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return default
+        if not answer:
+            return default
+        try:
+            resolve_folder_id(answer)
+        except ValueError as exc:
+            print(f"  ! {exc}")
+            continue
+        return answer
+    print("  ! no valid folder given - falling back to the bundled sample folder")
+    return default
 
 
 class Log:
@@ -305,14 +403,27 @@ def png_bytes_to_jpeg(raw: bytes) -> bytes:
     return buf.getvalue()
 
 
-async def build_pdf(page_bytes: list[bytes], out_path: Path) -> None:
-    """Assemble page images into a PDF (img2pdf keeps the images lossless)."""
+async def build_pdf(page_bytes: list[bytes], out_path: Path, title: str | None = None) -> None:
+    """Assemble page images into a PDF (img2pdf keeps the images lossless).
+
+    `title` records the document's original name in the PDF metadata, so the file
+    is still identifiable even if it is later moved or renamed.
+    """
     import img2pdf
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    data = await asyncio.to_thread(
-        img2pdf.convert, [io.BytesIO(b) for b in page_bytes]
-    )
+    kwargs = {"creator": "drive-pdf-downloader", "producer": "drive-pdf-downloader"}
+    if title:
+        kwargs["title"] = title
+    try:
+        data = await asyncio.to_thread(
+            img2pdf.convert, [io.BytesIO(b) for b in page_bytes], **kwargs
+        )
+    except TypeError:
+        # img2pdf build without metadata keywords: still produce the PDF.
+        data = await asyncio.to_thread(
+            img2pdf.convert, [io.BytesIO(b) for b in page_bytes]
+        )
     part = out_path.with_suffix(out_path.suffix + ".part")
     part.write_bytes(data)
     part.replace(out_path)  # atomic: never leave a truncated PDF behind
@@ -390,14 +501,22 @@ async def capture_engine_b(page, count: int, log: Log) -> list[bytes]:
     return pages
 
 
-async def fetch_one(browser, sem: asyncio.Semaphore, file_id: str, name: str,
+async def fetch_one(browser, sem: asyncio.Semaphore, file_id: str, source_name: str,
                     out_dir: Path, log: Log, timeout_s: float) -> dict:
-    """Download a single PDF and return a result dict for the verifier."""
+    """Download a single PDF and return a result dict for the verifier.
+
+    `source_name` is the file's name exactly as Drive lists it; the output keeps
+    that name verbatim (see `output_name`) unless this filesystem forbids it.
+    """
+    file_name, rename_reason = output_name(source_name)
     async with sem:
         result = {
-            "id": file_id, "name": name, "expected": 0, "captured": 0,
-            "status": "ERR", "detail": "", "path": out_dir / f"{name}.pdf",
+            "id": file_id, "name": source_name, "file": file_name,
+            "expected": 0, "captured": 0, "status": "ERR", "detail": "",
+            "path": out_dir / file_name,
         }
+        if rename_reason:
+            log(f"  note  {source_name!r} -> {file_name!r} ({rename_reason})")
         ctx = await browser.new_context(user_agent=UA)
         page = await ctx.new_page()
         page.set_default_timeout(30_000)
@@ -434,7 +553,10 @@ async def fetch_one(browser, sem: asyncio.Semaphore, file_id: str, name: str,
                 return result
 
             result["captured"] = len(pages)
-            await build_pdf(pages, result["path"])
+            await build_pdf(
+                pages, result["path"],
+                title=re.sub(r"(?i)\.pdf$", "", file_name),
+            )
             result["status"] = "OK"
             result["detail"] = engine
         except Exception as exc:
@@ -444,9 +566,9 @@ async def fetch_one(browser, sem: asyncio.Semaphore, file_id: str, name: str,
             await ctx.close()
 
         if result["status"] == "OK":
-            log(f"  ok    {name}  ({result['captured']}/{result['expected'] or '?'} pages, {result['detail']})")
+            log(f"  ok    {file_name}  ({result['captured']}/{result['expected'] or '?'} pages, {result['detail']})")
         else:
-            log(f"  FAIL  {name}  [{result['status']}] {result['detail']}")
+            log(f"  FAIL  {file_name}  [{result['status']}] {result['detail']}")
         return result
 
 
@@ -505,23 +627,25 @@ def verify(results: list[dict], log: Log) -> list[dict]:
     problems: list[dict] = []
     for r in sorted(results, key=lambda x: x["name"]):
         path = r["path"]
+        # Surface any filename change at verification time too.
+        alias = "" if path.name == r["name"] else f"  (Drive name: {r['name']})"
         if not path.exists():
-            log(f"  MISSING  {path.name}  (viewer said {r['expected']} pages)  [{r['status']}] {r['detail']}")
+            log(f"  MISSING  {path.name}{alias}  (viewer said {r['expected']} pages)  [{r['status']}] {r['detail']}")
             problems.append(r)
             continue
         try:
             pages = len(pdfium.PdfDocument(str(path)))
         except Exception as exc:
-            log(f"  UNREAD   {path.name}  ({exc})")
+            log(f"  UNREAD   {path.name}{alias}  ({exc})")
             problems.append(r)
             continue
         mb = path.stat().st_size / 1024 / 1024
         expected = r["expected"] or 0
         if expected and pages < expected:
-            log(f"  SHORT    {path.name}  {pages}/{expected} pages, {mb:.2f} MB")
+            log(f"  SHORT    {path.name}{alias}  {pages}/{expected} pages, {mb:.2f} MB")
             problems.append(r)
         else:
-            log(f"  OK       {path.name}  {pages} pages, {mb:.2f} MB")
+            log(f"  OK       {path.name}{alias}  {pages} pages, {mb:.2f} MB")
     log(f"verification: {len(results) - len(problems)} good, {len(problems)} problem")
     return problems
 
@@ -540,7 +664,15 @@ async def amain(args: argparse.Namespace) -> int:
     log = Log(quiet=args.quiet)
     out_dir = Path(args.out).expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    folder_id = resolve_folder_id(args.folder)
+
+    # Folder selection: --folder, else ask (interactive terminals only), else the
+    # bundled sample. Resolved before the browser starts so a bad URL costs nothing.
+    folder = choose_folder(args, log)
+    try:
+        folder_id = resolve_folder_id(folder)
+    except ValueError as exc:
+        raise SystemExit(f"error: {exc}") from None
+    log("folder id", folder_id)
 
     from playwright.async_api import async_playwright
 
@@ -573,7 +705,7 @@ async def amain(args: argparse.Namespace) -> int:
 
         t0 = time.time()
         results = list(await asyncio.gather(*(
-            fetch_one(browser, sem, r["id"], clean_name(r["name"]), out_dir, log, args.timeout)
+            fetch_one(browser, sem, r["id"], r["name"], out_dir, log, args.timeout)
             for r in targets
         )))
         log(f"download pass finished in {time.time() - t0:.1f}s")
@@ -585,14 +717,14 @@ async def amain(args: argparse.Namespace) -> int:
             if not problems:
                 break
             log(f"=== repair pass {attempt}/{args.retries}: {len(problems)} file(s) ===")
-            by_name = {r["name"]: r for r in results}
+            by_file = {r["file"]: r for r in results}
             for prob in problems:
-                row = next((r for r in rows if clean_name(r["name"]) == prob["name"]), None)
+                row = next((r for r in rows if output_name(r["name"])[0] == prob["file"]), None)
                 if row:
-                    by_name[prob["name"]] = await fetch_one(
-                        browser, sem, row["id"], prob["name"], out_dir, log, args.timeout
+                    by_file[prob["file"]] = await fetch_one(
+                        browser, sem, row["id"], row["name"], out_dir, log, args.timeout
                     )
-            results = list(by_name.values())
+            results = list(by_file.values())
             problems = verify(results, log)
             if len(problems) >= prev:
                 log("no further progress - stopping repair attempts")
@@ -622,7 +754,10 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
             "  python drive_pdf_downloader.py --folder 1OhkZja... --out ./pdfs\n"
         ),
     )
-    ap.add_argument("--folder", default=DEFAULT_FOLDER, help="folder URL or folder id")
+    ap.add_argument("--folder", default=None,
+                    help="folder URL or folder id; if omitted you are prompted for one")
+    ap.add_argument("--no-input", action="store_true",
+                    help="never prompt; use the bundled sample folder when --folder is omitted")
     ap.add_argument("--out", default=str(DEFAULT_OUT), help="output directory (default: ./downloads)")
     ap.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help="concurrent downloads (default: 2)")
     ap.add_argument("--retries", type=int, default=DEFAULT_RETRIES, help="repair passes for short files (default: 2)")

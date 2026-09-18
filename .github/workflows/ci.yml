@@ -51,10 +51,8 @@ jobs:
       - name: Browser discovery works on this OS
         run: python -c "import drive_pdf_downloader as m; print('chrome:', m.find_chrome()); print('candidates:', len(m.chrome_candidates()))"
 
-      - name: Cross-platform name/path helpers
-        run: |
-          python -c "import drive_pdf_downloader as m; assert m.clean_name('a/b:c*d?.pdf') == 'a_b_c_d_'; assert m.clean_name('x.pdf') == 'x'; assert m.clean_name('') == 'document'; print('helpers ok')"
-          python -c "import drive_pdf_downloader as m; assert m.resolve_folder_id('https://drive.google.com/drive/u/0/folders/1OhkZjaNPP8InvTphuz-XaKGOly6NS-Iq') == '1OhkZjaNPP8InvTphuz-XaKGOly6NS-Iq'; print('ids ok')"
+      - name: Behaviour checks (names, folder inputs, CLI)
+        run: python scripts/ci_checks.py
 
       - name: Lint
         run: python -m ruff check .
