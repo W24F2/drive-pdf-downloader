@@ -53,6 +53,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import contextlib
 import io
 import os
 import re
@@ -73,6 +74,23 @@ DEFAULT_OUT = ROOT / "downloads"
 DEFAULT_WORKERS = 2      # be polite to Drive; raise it if you like
 DEFAULT_RETRIES = 2      # repair passes for files that came up short
 DEFAULT_TIMEOUT = 600.0  # per-file render budget (seconds)
+
+
+def enable_utf8_output() -> None:
+    """Stop non-Latin file names from killing the run on a legacy console.
+
+    Windows consoles default to a codepage (cp1252, cp437, ...) that cannot
+    represent CJK or other non-Latin characters, so reporting a Drive file
+    called e.g. "Maths Ext 1 数学.pdf" would raise UnicodeEncodeError mid-run -
+    after the download, which is the worst possible moment. Reconfiguring to
+    UTF-8 with errors="replace" is always safe: in the worst case a glyph shows
+    as "?" instead of the process dying.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        with contextlib.suppress(AttributeError, OSError, ValueError):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        # ...already wrapped, or an exotic stream: printing still works.
+
 
 PREVIEW_URL = "https://drive.google.com/file/d/{file_id}/preview"
 FOLDER_ID_RE = re.compile(r"[-\w]{10,}")
@@ -777,6 +795,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 
 
 def main() -> int:
+    enable_utf8_output()
     args = parse_args()
     if args.setup:
         run_setup(Log(quiet=args.quiet))

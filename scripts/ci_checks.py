@@ -18,6 +18,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import drive_pdf_downloader as m  # noqa: E402  (path set up above)
 
+# These checks print non-Latin test labels. On a legacy Windows console (cp1252)
+# that used to abort the whole run with UnicodeEncodeError on the first one, so
+# the very fix being tested here is applied first.
+m.enable_utf8_output()
+
 failures: list[str] = []
 
 
@@ -49,6 +54,17 @@ def main() -> int:
         check(f"verbatim: {name}", out == name and why is None, (out, why))
     check("adds a missing extension", m.output_name("no-extension") == ("no-extension.pdf", None))
     check("trims surrounding whitespace", m.output_name("  spaced.pdf  ")[0] == "spaced.pdf")
+
+    # Regression guard: a legacy console codepage must not be able to abort a run
+    # half way through, once the files are already on disk.
+    print("console encoding")
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        "数学 ✓".encode(enc)
+        encodable = True
+    except (UnicodeEncodeError, LookupError):
+        encodable = False
+    check("stdout can carry non-Latin file names", encodable, enc)
 
     print("output_name sanitises only when it must, and says why")
     out, why = m.output_name('a/b:c*d?e"f<g>h|i.pdf')
