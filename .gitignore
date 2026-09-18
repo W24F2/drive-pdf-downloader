@@ -40,9 +40,8 @@ htmlcov/
 Thumbs.db
 desktop.ini
 
-# ---- scratch ----
-*.log
-_*.js
-_*.py
-!scripts/**
+# ---- scratch: repo root ONLY, so scripts/ is never accidentally un-ignored ----
+/*.log
+/_*.py
+/_*.js
 .workbuddy/
