@@ -1,0 +1,10 @@
+---
+name: Configuration
+blank_issues_enabled: true
+contact_links:
+  - name: Question or usage help
+    url: https://github.com/W24F2/drive-pdf-downloader/wiki/FAQ
+    about: The FAQ and Troubleshooting wiki pages answer most questions.
+  - name: Security report
+    url: https://github.com/W24F2/drive-pdf-downloader/security/advisories/new
+    about: Please report vulnerabilities privately, not as a public issue.

@@ -1,0 +1,48 @@
+# ---- downloaded output (never commit other people's documents) ----
+downloads/
+output/
+pdfs/
+*.pdf
+!docs/**/*.pdf
+
+# ---- secrets / local session data ----
+.env
+.env.*
+cookies*.json
+*_profile/
+_run_profile*/
+_rp_*/
+_chrome_link/
+
+# ---- python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ---- editors / os ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- scratch ----
+*.log
+_*.js
+_*.py
+!scripts/**
+.workbuddy/

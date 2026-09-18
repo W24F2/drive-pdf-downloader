@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: ${{ matrix.os }} / py${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install ruff
+
+      - name: Byte-compile
+        run: python -m py_compile drive_pdf_downloader.py
+
+      - name: Import check (all runtime deps present)
+        run: python -c "import drive_pdf_downloader as m; print(m.DEFAULT_WORKERS, m.MIN_PAGE_PX)"
+
+      - name: CLI contract
+        run: |
+          python drive_pdf_downloader.py --help
+          python -c "import subprocess,sys; out=subprocess.run([sys.executable,'drive_pdf_downloader.py','--help'],capture_output=True,text=True).stdout; assert '--workers' in out and '--folder' in out and '--setup' in out; print('CLI flags ok')"
+
+      - name: Browser discovery works on this OS
+        run: python -c "import drive_pdf_downloader as m; print('chrome:', m.find_chrome()); print('candidates:', len(m.chrome_candidates()))"
+
+      - name: Cross-platform name/path helpers
+        run: |
+          python -c "import drive_pdf_downloader as m; assert m.clean_name('a/b:c*d?.pdf') == 'a_b_c_d_'; assert m.clean_name('x.pdf') == 'x'; assert m.clean_name('') == 'document'; print('helpers ok')"
+          python -c "import drive_pdf_downloader as m; assert m.resolve_folder_id('https://drive.google.com/drive/u/0/folders/1OhkZjaNPP8InvTphuz-XaKGOly6NS-Iq') == '1OhkZjaNPP8InvTphuz-XaKGOly6NS-Iq'; print('ids ok')"
+
+      - name: Lint
+        run: python -m ruff check .
+
+      - name: Shellcheck the helper scripts (Ubuntu only, non-fatal)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck scripts/*.sh || echo "shellcheck reported issues (non-fatal)"
+
+  # No download job here on purpose: CI must not hammer Google Drive.
+  # Use .github/workflows/download.yml (manual or scheduled) for real runs.

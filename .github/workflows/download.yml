@@ -1,0 +1,76 @@
+name: Download Google Drive PDFs
+
+# Manual runs are the primary way to use this. Enable the schedule block below
+# only if you want a recurring archive (note: on public repos anyone can queue a
+# run, and scheduled runs consume Actions minutes on private repos).
+on:
+  workflow_dispatch:
+    inputs:
+      folder:
+        description: "Google Drive folder URL or folder id"
+        required: false
+        default: "https://drive.google.com/drive/u/0/folders/1OhkZjaNPP8InvTphuz-XaKGOly6NS-Iq"
+      workers:
+        description: "Concurrent downloads"
+        required: false
+        default: "4"
+  # schedule:
+  #   - cron: "0 3 * * 0"      # every Sunday at 03:00 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: drive-download
+  cancel-in-progress: false
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Download and verify
+        id: pull
+        run: |
+          set +e
+          python drive_pdf_downloader.py \
+            --folder "${{ github.event.inputs.folder || 'https://drive.google.com/drive/u/0/folders/1OhkZjaNPP8InvTphuz-XaKGOly6NS-Iq' }}" \
+            --workers "${{ github.event.inputs.workers || '4' }}" \
+            --quiet --out downloads
+          code=$?
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          echo "download exit code: $code"
+
+      - name: Inventory
+        if: always()
+        run: python scripts/ci_inventory.py downloads >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload PDFs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drive-pdfs-${{ github.run_number }}
+          path: downloads/*.pdf
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail if the archive is incomplete
+        if: steps.pull.outputs.exit_code != '0'
+        run: |
+          echo "::error::Some documents could not be retrieved intact (exit code ${{ steps.pull.outputs.exit_code }}). See the run log for SHORT/MISSING lines."
+          exit 1

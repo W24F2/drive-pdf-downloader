@@ -1,0 +1,7 @@
+# Runtime dependencies for drive-pdf-downloader
+# Install:  python -m pip install -r requirements.txt
+# Browser:  python -m playwright install chromium
+playwright>=1.44
+Pillow>=10.2
+img2pdf>=0.5
+pypdfium2>=4.30

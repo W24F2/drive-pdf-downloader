@@ -1,0 +1,27 @@
+# Normalise everything to LF in the repository, and never let a shell script
+# arrive on a Unix machine with CRLF endings (it would fail to execute).
+* text=auto eol=lf
+
+*.sh            text eol=lf
+*.ps1           text eol=crlf
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+*.py            text eol=lf
+*.md            text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.toml          text eol=lf
+*.json          text eol=lf
+*.txt           text eol=lf
+
+# GitHub renders these as diffs, not blobs
+*.pdf           binary
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.ico           binary
+*.zip           binary
+
+# Keep the vendored/linguistic noise out of `git diff`
+*.min.js        linguist-vendored
+*.min.css       linguist-vendored
