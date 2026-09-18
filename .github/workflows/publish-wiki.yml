@@ -1,0 +1,75 @@
+name: Publish wiki
+
+# Mirrors the wiki/ folder in this repository to the GitHub wiki, so the wiki can
+# never drift away from the versioned Markdown.
+#
+# One-time prerequisite, imposed by GitHub itself: the <repo>.wiki.git storage
+# does not exist until the first page is saved through the web UI, and there is
+# no API that can create it. Until you do that once, this workflow reports a
+# warning instead of failing. See wiki/Home.md for the one-click link.
+#
+# After that, this workflow keeps the wiki in sync on every push that touches
+# wiki/**, with no local tooling required.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wiki/**"
+      - ".github/workflows/publish-wiki.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-wiki
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Sync wiki/ to the repository wiki
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Mirror wiki/ into the wiki repository
+        env:
+          REPO: ${{ github.repository }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          URL="https://x-access-token:${TOKEN}@github.com/${REPO}.wiki.git"
+          WORK="$(mktemp -d)"
+
+          if git clone --depth 1 "$URL" "$WORK" 2>/dev/null; then
+            echo "wiki repository found"
+          elif git clone --depth 1 "https://github.com/${REPO}.wiki.git" "$WORK" 2>/dev/null; then
+            echo "wiki repository found (anonymous clone)"
+          else
+            echo "::warning title=Wiki not initialised::GitHub has not created ${REPO}.wiki.git yet. Open https://github.com/${REPO}/wiki, click 'Create the first page', save, then re-run this workflow. Nothing else is needed - this workflow will keep it in sync from then on."
+            echo "### Wiki not initialised yet" >> "$GITHUB_STEP_SUMMARY"
+            echo "Open https://github.com/${REPO}/wiki and click **Create the first page**, then re-run this workflow." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Replace the contents wholesale so deleted pages actually disappear.
+          find "$WORK" -mindepth 1 -maxdepth 1 -name '.git' -prune -o -exec rm -rf {} +
+          cp wiki/*.md "$WORK"/
+          echo "pages: $(ls "$WORK" | tr '\n' ' ')"
+
+          cd "$WORK"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "wiki already up to date"
+            exit 0
+          fi
+          git commit -m "docs: sync wiki from ${REPO}@${GITHUB_SHA::7}"
+          git push origin HEAD
+          echo "### Wiki published" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://github.com/${REPO}/wiki" >> "$GITHUB_STEP_SUMMARY"

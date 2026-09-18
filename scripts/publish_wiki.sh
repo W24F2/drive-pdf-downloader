@@ -5,10 +5,14 @@
 #  Usage:  ./scripts/publish_wiki.sh                 # auto-detect from origin
 #          ./scripts/publish_wiki.sh owner/repo
 #
-#  Prerequisites:
-#    * git push access to the wiki (i.e. to the repo)
-#    * the wiki must be ENABLED once by hand: repo -> Settings -> Features -> Wikis,
-#      then create any first page. GitHub only creates the .wiki.git repo after that.
+#  One-time prerequisite (a GitHub limitation, not ours): the wiki's git
+#  storage does not exist until the *first* page is saved through the web UI.
+#  This script detects that, tells you the exact link, and - if you are on a
+#  terminal - waits for you to click it once and then publishes everything.
+#
+#  Exit codes:  0 published or already current
+#               1 bad usage / missing wiki/ directory
+#               3 the wiki still is not initialised (non-interactive run)
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -29,15 +33,51 @@ if [ ! -d "$ROOT/wiki" ]; then
     exit 1
 fi
 
+WIKI_URL="https://github.com/${REPO}.wiki.git"
+NEW_PAGE_URL="https://github.com/${REPO}/wiki"
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-echo "cloning https://github.com/${REPO}.wiki.git ..."
-if ! git clone --depth 1 "https://github.com/${REPO}.wiki.git" "$TMP" 2>/dev/null; then
-    echo "Could not clone the wiki repo." >&2
-    echo "Enable it first: GitHub repo -> Settings -> Features -> tick 'Wikis'," >&2
-    echo "then open the Wiki tab and create a first page. Then re-run this script." >&2
-    exit 1
+echo "cloning ${WIKI_URL} ..."
+
+if ! git clone --depth 1 "$WIKI_URL" "$TMP" 2>/dev/null; then
+    cat >&2 <<EOF
+
+  GitHub has not created the wiki storage yet.
+
+  A wiki's ${REPO}.wiki.git repository is only born when its first page is
+  saved through the web UI - there is no API for it, so no script can do this
+  part. You only ever have to do it once.
+
+    1. open  ${NEW_PAGE_URL}
+    2. click  "Create the first page"
+    3. type anything (it will be overwritten) and press  Save Page
+
+EOF
+
+    # Interactive: wait for the click instead of making the user re-run this.
+    if [ -t 0 ]; then
+        for _ in $(seq 1 12); do
+            printf '  press Enter once the page is saved (or "q" to give up): '
+            read -r reply || exit 3
+            case "$reply" in
+                q|Q) echo "  giving up - re-run this script when you are ready" >&2; exit 3 ;;
+            esac
+            if git clone --depth 1 "$WIKI_URL" "$TMP" 2>/dev/null; then
+                echo "  wiki initialised - publishing all pages"
+                break
+            fi
+            echo "  still not there, give GitHub a moment and press Enter again"
+        done
+        if [ ! -d "$TMP/.git" ]; then
+            echo "  still unavailable - re-run this script later" >&2
+            exit 3
+        fi
+    else
+        echo "  re-run this script once the page is saved." >&2
+        exit 3
+    fi
 fi
 
 cp -v "$ROOT"/wiki/*.md "$TMP"/

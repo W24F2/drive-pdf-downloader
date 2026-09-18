@@ -42,6 +42,8 @@ The first public release, after a long debugging session against a real 19-docum
 - GitHub Actions: a 3-OS / 2-Python CI matrix, and a manual or scheduled download workflow
   that uploads the PDFs as an artifact.
 - Wiki (7 pages) plus publisher scripts for macOS/Linux and Windows.
+- **Automatic wiki mirroring** — `.github/workflows/publish-wiki.yml` syncs `wiki/` to the wiki on
+  every push that touches it, so the pages and the repository never drift apart.
 - GitHub templates, `pyproject.toml` with ruff config, `.gitattributes`, `.editorconfig`.
 
 ### Fixed
@@ -75,6 +77,11 @@ The first public release, after a long debugging session against a real 19-docum
   Run `ocrmypdf` if you need a text layer.
 - Measured on the reference folder: 19 files, 650 pages, 117 MB — ~2 min at 2 workers,
   ~1 min at 4.
+- The GitHub **wiki tab needs one manual click** the first time. GitHub creates a wiki's
+  `<repo>.wiki.git` storage only after its first page is saved through the web UI, and neither the
+  REST API nor GraphQL exposes any way to do it (verified: 259 GraphQL mutations, none wiki-related).
+  Open the Wiki tab, click *Create the first page*, save — then the workflow and scripts keep it in
+  sync automatically.
 
 ## [0.1.0] - 2026-09-18
 

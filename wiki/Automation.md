@@ -158,6 +158,27 @@ It deliberately performs **no downloads** — CI should not hammer Drive.
 
 ---
 
+## Publishing the wiki
+
+`.github/workflows/publish-wiki.yml` mirrors the `wiki/` folder to the GitHub wiki whenever
+anything under `wiki/**` is pushed, so the wiki can never drift from the versioned Markdown. It can
+also be run by hand from **Actions → Publish wiki → Run workflow**.
+
+**One-time prerequisite.** GitHub does not create the `<repo>.wiki.git` storage until the *first*
+page is saved through the web UI, and there is no API that can do it. Every wiki-publishing tool has
+the same limitation. Do this once:
+
+1. open <https://github.com/W24F2/drive-pdf-downloader/wiki>
+2. click **Create the first page**
+3. type anything and press **Save Page**
+
+From then on the workflow keeps it in sync — or run `./scripts/publish_wiki.sh`
+(`.\scripts\publish_wiki.ps1` on Windows) locally, which prints that same link and waits for you to
+click it before publishing every page in one go. The workflow reports a *warning*, not a failure,
+while the wiki is still uninitialised.
+
+---
+
 ## Monitoring your job
 
 * Check exit code `2` — that means "finished, but something is incomplete".

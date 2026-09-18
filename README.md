@@ -3,6 +3,7 @@
 **Download "view only" Google Drive PDFs as clean, complete, verified PDFs — on Windows, macOS and Linux.**
 
 [![CI](https://github.com/W24F2/drive-pdf-downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/W24F2/drive-pdf-downloader/actions/workflows/ci.yml)
+[![Wiki](https://img.shields.io/badge/docs-wiki-blueviolet.svg)](https://github.com/W24F2/drive-pdf-downloader/wiki)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#-quick-start)
@@ -199,8 +200,29 @@ folder listing ─▶ preview per file ─▶ parse "Page X of Y" ─▶ scroll 
 7. **Verify** — every PDF is reopened and page-counted; anything missing or short triggers a repair
    pass (up to `--retries`).
 
-More detail, including the DOM specifics and why each step is necessary, is in the
-**[wiki](https://github.com/W24F2/drive-pdf-downloader/wiki)** — see `wiki/` in this repo.
+More detail, including the DOM specifics and why each step is necessary, is in `docs/architecture.md`.
+
+---
+
+## 📚 Documentation
+
+The full manual lives in the **[project wiki](https://github.com/W24F2/drive-pdf-downloader/wiki)**:
+
+| Page | What's in it |
+| --- | --- |
+| [Home](https://github.com/W24F2/drive-pdf-downloader/wiki) | Overview and navigation |
+| [Installation](https://github.com/W24F2/drive-pdf-downloader/wiki/Installation) | Per-OS setup, virtualenvs, Docker, CI |
+| [Usage](https://github.com/W24F2/drive-pdf-downloader/wiki/Usage) | Every flag, output naming, exit codes |
+| [How It Works](https://github.com/W24F2/drive-pdf-downloader/wiki/How-It-Works) | The viewer DOM, the two capture engines, verification |
+| [Automation](https://github.com/W24F2/drive-pdf-downloader/wiki/Automation) | cron, Task Scheduler, launchd, GitHub Actions |
+| [Troubleshooting](https://github.com/W24F2/drive-pdf-downloader/wiki/Troubleshooting) | Symptom → fix table, collecting diagnostics |
+| [FAQ](https://github.com/W24F2/drive-pdf-downloader/wiki/FAQ) | Short answers to the common questions |
+| [Legal and Ethics](https://github.com/W24F2/drive-pdf-downloader/wiki/Legal-and-Ethics) | What this tool is and is not for |
+
+The same files are versioned in [`wiki/`](wiki), and
+[`.github/workflows/publish-wiki.yml`](.github/workflows/publish-wiki.yml) mirrors that folder to the
+wiki on every push, so the two can never drift apart. To publish by hand instead, run
+`./scripts/publish_wiki.sh`.
 
 ---
 
@@ -263,10 +285,11 @@ drive-pdf-downloader/
 │   ├── setup_windows.ps1  run_windows.ps1  run_windows.bat
 │   ├── setup_macos.sh     run_macos.sh
 │   ├── setup_linux.sh     run_linux.sh
+│   ├── ci_checks.py       ci_inventory.py
 │   └── publish_wiki.sh    publish_wiki.ps1
 ├── wiki/                        # GitHub wiki pages (Home, Installation, …)
 ├── docs/                        # architecture notes
-├── .github/workflows/           # ci.yml (3-OS matrix) + download.yml (manual/scheduled)
+├── .github/workflows/           # ci.yml (3-OS matrix), download.yml, publish-wiki.yml
 └── LICENSE
 ```
 
