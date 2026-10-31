@@ -45,3 +45,12 @@ desktop.ini
 /_*.py
 /_*.js
 .workbuddy/
+.venv/
+downloads/
+__pycache__/
+*.pyc
+*.pdf
+drive_pdf_downloader_backup.py
+.env
+storage_state.json
+playwright/.auth/

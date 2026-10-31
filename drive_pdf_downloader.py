@@ -41,6 +41,7 @@ Usage
     python drive_pdf_downloader.py --list              # just list what it finds
     python drive_pdf_downloader.py --folder <url|id>   # any shared folder
     python drive_pdf_downloader.py --setup             # install missing deps
+    python drive_pdf_downloader.py --login --list      # sign in to a restricted folder
 
 Run `--help` for every option.
 
@@ -102,7 +103,7 @@ UA = (
 )
 
 BROWSER_ARGS = [
-    "--no-sandbox",
+    # Keep Chromium sandbox enabled, particularly when signing in to Google.
     "--disable-dev-shm-usage",
     "--disable-gpu",
     "--no-first-run",
@@ -519,7 +520,7 @@ async def capture_engine_b(page, count: int, log: Log) -> list[bytes]:
     return pages
 
 
-async def fetch_one(browser, sem: asyncio.Semaphore, file_id: str, source_name: str,
+async def fetch_one(ctx, sem: asyncio.Semaphore, file_id: str, source_name: str,
                     out_dir: Path, log: Log, timeout_s: float) -> dict:
     """Download a single PDF and return a result dict for the verifier.
 
@@ -535,7 +536,8 @@ async def fetch_one(browser, sem: asyncio.Semaphore, file_id: str, source_name: 
         }
         if rename_reason:
             log(f"  note  {source_name!r} -> {file_name!r} ({rename_reason})")
-        ctx = await browser.new_context(user_agent=UA)
+        # Reuse the same browser context that authenticated and listed the folder.
+        # Creating a new context here would lose the signed-in Google session.
         page = await ctx.new_page()
         page.set_default_timeout(30_000)
         try:
@@ -581,7 +583,7 @@ async def fetch_one(browser, sem: asyncio.Semaphore, file_id: str, source_name: 
             result["status"] = "ERR"
             result["detail"] = f"{type(exc).__name__}: {exc}"
         finally:
-            await ctx.close()
+            await page.close()
 
         if result["status"] == "OK":
             log(f"  ok    {file_name}  ({result['captured']}/{result['expected'] or '?'} pages, {result['detail']})")
@@ -695,61 +697,91 @@ async def amain(args: argparse.Namespace) -> int:
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
-        browser = await launch_browser(p, args.engine, not args.headed, log)
-        listing = await browser.new_page()
-        listing.set_default_timeout(45_000)
+        # --login forces a visible browser. Login is performed by the user in
+        # Google's own page, never through this script or the terminal.
+        browser = await launch_browser(
+            p, args.engine, headless=not (args.headed or args.login), log=log
+        )
+        # A single context is essential: its login cookies are inherited by
+        # every page used to list and process PDFs. Nothing is written to disk.
+        ctx = await browser.new_context()
+        try:
+            listing = await ctx.new_page()
+            listing.set_default_timeout(45_000)
 
-        url = f"https://drive.google.com/drive/folders/{folder_id}"
-        log("opening folder", url)
-        await listing.goto(url, wait_until="load")
-        await listing.wait_for_timeout(3_000)
+            url = f"https://drive.google.com/drive/folders/{folder_id}"
+            log("opening folder", url)
+            await listing.goto(url, wait_until="domcontentloaded")
+            await listing.wait_for_timeout(3_000)
 
-        rows = await list_files(listing)
-        if not rows:
-            log("no PDF rows found - is the folder link shared publicly?")
-            await browser.close()
-            return 1
-        log(f"found {len(rows)} PDF(s)")
-        if args.list:
-            for i, r in enumerate(rows, 1):
-                log(f"  {i:>3}. {r['name']}")
-            await browser.close()
-            return 0
-        await listing.close()
+            if args.login:
+                print(
+                    "\nA Chromium browser window is open.\n"
+                    "1. Sign in there with the Google account allowed to view this folder.\n"
+                    "2. If prompted, finish Google 2-step verification there.\n"
+                    "3. Return to PowerShell only after the folder is visible.\n"
+                    "4. Press Enter here to continue.\n"
+                    "Do not type your Google password into PowerShell.\n",
+                    flush=True,
+                )
+                # Run input in a worker thread so Playwright's browser event loop
+                # remains active while the user is signing in.
+                await asyncio.to_thread(input, "Press Enter after signing in: ")
+                await listing.goto(url, wait_until="domcontentloaded")
+                await listing.wait_for_timeout(3_000)
 
-        targets = rows[: args.only] if args.only else rows
-        sem = asyncio.Semaphore(max(1, args.workers))
-        log(f"downloading {len(targets)} file(s), {args.workers} worker(s) -> {out_dir}")
+            rows = await list_files(listing)
+            if not rows:
+                log("no PDF rows found")
+                log("current browser URL:", listing.url)
+                log(
+                    "possible causes: not signed in to the authorized account, "
+                    "folder access denied, or Google Drive changed its page markup"
+                )
+                log("check the visible Chromium window and try --login --list again")
+                return 1
+            log(f"found {len(rows)} PDF(s)")
+            if args.list:
+                for i, r in enumerate(rows, 1):
+                    log(f"  {i:>3}. {r['name']}")
+                return 0
+            await listing.close()
 
-        t0 = time.time()
-        results = list(await asyncio.gather(*(
-            fetch_one(browser, sem, r["id"], r["name"], out_dir, log, args.timeout)
-            for r in targets
-        )))
-        log(f"download pass finished in {time.time() - t0:.1f}s")
+            targets = rows[: args.only] if args.only else rows
+            sem = asyncio.Semaphore(max(1, args.workers))
+            log(f"downloading {len(targets)} file(s), {args.workers} worker(s) -> {out_dir}")
 
-        # ---- repair passes: retry anything missing or short --------------- #
-        problems = verify(results, log)
-        prev = len(problems)
-        for attempt in range(1, args.retries + 1):
-            if not problems:
-                break
-            log(f"=== repair pass {attempt}/{args.retries}: {len(problems)} file(s) ===")
-            by_file = {r["file"]: r for r in results}
-            for prob in problems:
-                row = next((r for r in rows if output_name(r["name"])[0] == prob["file"]), None)
-                if row:
-                    by_file[prob["file"]] = await fetch_one(
-                        browser, sem, row["id"], row["name"], out_dir, log, args.timeout
-                    )
-            results = list(by_file.values())
+            t0 = time.time()
+            results = list(await asyncio.gather(*(
+                fetch_one(ctx, sem, r["id"], r["name"], out_dir, log, args.timeout)
+                for r in targets
+            )))
+            log(f"download pass finished in {time.time() - t0:.1f}s")
+
+            # ---- repair passes: retry anything missing or short ---- #
             problems = verify(results, log)
-            if len(problems) >= prev:
-                log("no further progress - stopping repair attempts")
-                break
             prev = len(problems)
-
-        await browser.close()
+            for attempt in range(1, args.retries + 1):
+                if not problems:
+                    break
+                log(f"=== repair pass {attempt}/{args.retries}: {len(problems)} file(s) ===")
+                by_file = {r["file"]: r for r in results}
+                for prob in problems:
+                    row = next((r for r in rows if output_name(r["name"])[0] == prob["file"]), None)
+                    if row:
+                        by_file[prob["file"]] = await fetch_one(
+                            ctx, sem, row["id"], row["name"], out_dir, log, args.timeout
+                        )
+                results = list(by_file.values())
+                problems = verify(results, log)
+                if len(problems) >= prev:
+                    log("no further progress - stopping repair attempts")
+                    break
+                prev = len(problems)
+        finally:
+            # Session cookies are not persisted. Each new run needs --login.
+            await ctx.close()
+            await browser.close()
 
     good = len(results) - len(problems)
     log(f"done - {good}/{len(results)} PDFs saved to {out_dir}")
@@ -768,6 +800,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
             "examples:\n"
             "  python drive_pdf_downloader.py --setup\n"
             "  python drive_pdf_downloader.py --list\n"
+            "  python drive_pdf_downloader.py --login --list\n"
             "  python drive_pdf_downloader.py --workers 4\n"
             "  python drive_pdf_downloader.py --folder 1OhkZja... --out ./pdfs\n"
         ),
@@ -783,6 +816,8 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--engine", choices=["auto", "chromium", "chrome"], default="auto",
                     help="browser to drive (default: auto = bundled then system)")
     ap.add_argument("--headed", action="store_true", help="show the browser window (debugging)")
+    ap.add_argument("--login", action="store_true",
+                    help="open a visible browser for manual Google sign-in (restricted folders)")
     ap.add_argument("--only", type=int, default=0, metavar="N", help="process only the first N files")
     ap.add_argument("--one", action="store_true", help="shorthand for --only 1")
     ap.add_argument("--list", action="store_true", help="list the PDFs found, then exit")
